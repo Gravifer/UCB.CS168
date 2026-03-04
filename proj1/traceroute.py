@@ -206,35 +206,40 @@ class _PacketView:
 
     @classmethod
     def _parse_embedded_packet(cls, data: bytes, start: int) -> ParsedLayer:
-        parser = cls._choice(cls._parse_ip_chain(), cls._unknown_parser("failed to parse embedded packet"))
+        parser = cls._choice(cls._chain_parser("ipv4"), cls._unknown_parser("failed to parse embedded packet"))
         parsed = parser(data, start)
         if parsed is None:
             return ParsedLayer("unknown", start, len(data), note="failed to parse embedded packet")
         return parsed
 
     @classmethod
-    def _next_after_ipv4(cls, node: ParsedLayer) -> Parser | None:
-        ipv4 = node.value
-        if not isinstance(ipv4, IPv4):
-            return None
-
-        if ipv4.proto == 1:
-            return cls._parse_icmp_chain()
-        if ipv4.proto == 17:
-            return cls._choice(cls._parse_udp, cls._unknown_parser("truncated or invalid UDP payload"))
-        return cls._unknown_parser(f"unsupported IPv4 protocol {ipv4.proto}")
+    def _next_parser(cls, node: ParsedLayer) -> Parser | None:
+        match node.kind:
+            case "ipv4":
+                ipv4 = node.value
+                if not isinstance(ipv4, IPv4):
+                    return None
+                match ipv4.proto:
+                    case 1:
+                        return cls._chain_parser("icmp")
+                    case 17:
+                        return cls._choice(cls._parse_udp, cls._unknown_parser("truncated or invalid UDP payload"))
+                    case _:
+                        return cls._unknown_parser(f"unsupported IPv4 protocol {ipv4.proto}")
+            case "icmp":
+                return cls._parse_embedded_packet
+            case _:
+                return None
 
     @classmethod
-    def _next_after_icmp(cls, _: ParsedLayer) -> Parser | None:
-        return cls._parse_embedded_packet
-
-    @classmethod
-    def _parse_icmp_chain(cls) -> Parser:
-        return cls._seq(cls._parse_icmp, cls._next_after_icmp)
-
-    @classmethod
-    def _parse_ip_chain(cls) -> Parser:
-        return cls._seq(cls._parse_ipv4, cls._next_after_ipv4)
+    def _chain_parser(cls, kind: str) -> Parser:
+        match kind:
+            case "ipv4":
+                return cls._seq(cls._parse_ipv4, cls._next_parser)
+            case "icmp":
+                return cls._seq(cls._parse_icmp, cls._next_parser)
+            case _:
+                raise ValueError(f"Unsupported chain kind: {kind}")
 
     @classmethod
     def _subtree_end(cls, node: ParsedLayer) -> int:
@@ -245,7 +250,8 @@ class _PacketView:
 
     @classmethod
     def parse_packet(cls, data: bytes) -> ParsedLayer:
-        root = cls._choice(cls._parse_ip_chain(), cls._unknown_parser("too short or invalid IPv4 packet"))(data, 0)
+        # since it's traceroute, we expect the outmost to be IPv4
+        root = cls._choice(cls._chain_parser("ipv4"), cls._unknown_parser("too short or invalid IPv4 packet"))(data, 0)
         if root is None:
             return ParsedLayer("unknown", 0, len(data), note="too short or invalid IPv4 packet")
 
@@ -335,22 +341,21 @@ class _PacketView:
 
     @staticmethod
     def _layer_label(node: ParsedLayer) -> str:
-        if node.kind == "ipv4" and isinstance(node.value, IPv4):
-            ipv4 = node.value
-            return (
-                f"IPv4 src={ipv4.src} dst={ipv4.dst} "
-                f"ttl={ipv4.ttl} proto={ipv4.proto}"
-            )
-        if node.kind == "icmp" and isinstance(node.value, ICMP):
-            icmp = node.value
-            return f"ICMP type={icmp.type} code={icmp.code} cksum=0x{icmp.cksum:x}"
-        if node.kind == "udp" and isinstance(node.value, UDP):
-            udp = node.value
-            return (
-                f"UDP src_port={udp.src_port} dst_port={udp.dst_port} "
-                f"len={udp.len} cksum=0x{udp.cksum:x}"
-            )
-        return f"Unknown ({node.note})"
+        match (node.kind, node.value):
+            case ("ipv4", IPv4() as ipv4):
+                return (
+                    f"IPv4 src={ipv4.src} dst={ipv4.dst} "
+                    f"ttl={ipv4.ttl} proto={ipv4.proto}"
+                )
+            case ("icmp", ICMP() as icmp):
+                return f"ICMP type={icmp.type} code={icmp.code} cksum=0x{icmp.cksum:x}"
+            case ("udp", UDP() as udp):
+                return (
+                    f"UDP src_port={udp.src_port} dst_port={udp.dst_port} "
+                    f"len={udp.len} cksum=0x{udp.cksum:x}"
+                )
+            case _:
+                return f"Unknown ({node.note})"
 
     @classmethod
     def print_layer_tree(cls, data: bytes, node: ParsedLayer, verbose: bool = True, prefix: str = "", is_last: bool = True) -> None:
@@ -406,20 +411,77 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
     should be included as the final element in the list.
     """
 
-    # TODO Add your implementation
-    """
-    for ttl in range(1, TRACEROUTE_MAX_TTL+1):
-        util.print_result([], ttl)
-    return []
-    """
-    sendsock.set_ttl(2)
-    sendsock.sendto(b'Hola', (ip, TRACEROUTE_PORT_NUMBER))
-    recvsock.recv_select()
-    data, (addr, port) = recvsock.recvfrom()
-    print(f"Received packet from {addr}:{port}")
-    print_recv_packet(data, pretty=True, verbose=False)
-    util.print_result([addr], 2)
-    return []
+    def validate_probe_reply(data: bytes) -> tuple[int, int, str, int] | None:
+        tree = parse_packet(data)
+
+        if tree.kind != "ipv4" or not isinstance(tree.value, IPv4):
+            return None
+        if tree.value.proto != util.IPPROTO_ICMP:
+            return None
+        if len(tree.children) == 0:
+            return None
+
+        icmp_node = tree.children[0]
+        if icmp_node.kind != "icmp" or not isinstance(icmp_node.value, ICMP):
+            return None
+
+        icmp = icmp_node.value
+        if icmp.type not in (3, 11):
+            return None
+        if len(icmp_node.children) == 0:
+            return None
+
+        embedded_ip_node = icmp_node.children[0]
+        if embedded_ip_node.kind != "ipv4" or not isinstance(embedded_ip_node.value, IPv4):
+            return None
+        if len(embedded_ip_node.children) == 0:
+            return None
+
+        embedded_udp_node = embedded_ip_node.children[0]
+        if embedded_udp_node.kind != "udp" or not isinstance(embedded_udp_node.value, UDP):
+            return None
+
+        embedded_ipv4 = embedded_ip_node.value
+        embedded_udp = embedded_udp_node.value
+        return icmp.type, icmp.code, embedded_ipv4.dst, embedded_udp.dst_port
+
+    results: list[list[str]] = []
+    payload = b"'cs168 Traceroute'"
+
+    for ttl in range(1, TRACEROUTE_MAX_TTL + 1):
+        sendsock.set_ttl(ttl)
+
+        ttl_routers: list[str] = []
+        seen_routers: set[str] = set()
+
+        for _ in range(PROBE_ATTEMPT_COUNT):
+            sendsock.sendto(payload, (ip, TRACEROUTE_PORT_NUMBER))
+
+            if not recvsock.recv_select():
+                continue
+
+            data, (addr, _) = recvsock.recvfrom()
+            validated = validate_probe_reply(data)
+            if validated is None:
+                continue
+
+            _, _, embedded_dst_ip, embedded_dst_port = validated
+            if embedded_dst_ip != ip:
+                continue
+            if embedded_dst_port != TRACEROUTE_PORT_NUMBER:
+                continue
+
+            if addr not in seen_routers:
+                seen_routers.add(addr)
+                ttl_routers.append(addr)
+
+        util.print_result(ttl_routers, ttl)
+        results.append(ttl_routers)
+
+        if ip in seen_routers:
+            return results
+
+    return results
 
 
 if __name__ == '__main__':
