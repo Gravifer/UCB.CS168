@@ -428,6 +428,8 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
         icmp = icmp_node.value
         if icmp.type not in (3, 11):
             return None
+        if icmp.type == 11 and icmp.code != 0:
+            return None
         if len(icmp_node.children) == 0:
             return None
 
@@ -447,18 +449,26 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
 
     results: list[list[str]] = []
     payload = b"'cs168 Traceroute'"
+    total_probe_span = TRACEROUTE_MAX_TTL * PROBE_ATTEMPT_COUNT
+    if TRACEROUTE_PORT_NUMBER + total_probe_span > 65535:
+        raise ValueError("probe UDP destination port exceeds valid range")
 
     for ttl in range(1, TRACEROUTE_MAX_TTL + 1):
         sendsock.set_ttl(ttl)
 
         ttl_routers: list[str] = []
         seen_routers: set[str] = set()
+        ttl_probe_ports: set[int] = set()
 
-        for _ in range(PROBE_ATTEMPT_COUNT):
-            sendsock.sendto(payload, (ip, TRACEROUTE_PORT_NUMBER))
+        for attempt in range(PROBE_ATTEMPT_COUNT):
+            probe_port = TRACEROUTE_PORT_NUMBER + ((ttl - 1) * PROBE_ATTEMPT_COUNT) + attempt
+            ttl_probe_ports.add(probe_port)
+            sendsock.sendto(payload, (ip, probe_port))
 
+        pending_probe_ports = set(ttl_probe_ports)
+        while pending_probe_ports:
             if not recvsock.recv_select():
-                continue
+                break
 
             data, (addr, _) = recvsock.recvfrom()
             validated = validate_probe_reply(data)
@@ -468,8 +478,10 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
             _, _, embedded_dst_ip, embedded_dst_port = validated
             if embedded_dst_ip != ip:
                 continue
-            if embedded_dst_port != TRACEROUTE_PORT_NUMBER:
+            if embedded_dst_port not in pending_probe_ports:
                 continue
+
+            pending_probe_ports.remove(embedded_dst_port)
 
             if addr not in seen_routers:
                 seen_routers.add(addr)

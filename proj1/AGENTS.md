@@ -76,14 +76,14 @@ Your implementation should tolerate and ignore without crashing:
 - [x] ICMP payload must include embedded IPv4 + UDP for matching.
 - [x] Embedded destination IP must match traceroute target.
 - [x] Embedded UDP destination port must match traceroute probe port.
-- [ ] For ICMP Time Exceeded (`type=11`), enforce `code=0`.
+- [x] For ICMP Time Exceeded (`type=11`), enforce `code=0`.
 
 ### Robustness
 - [x] Ignore unparseable/truncated packets without crashing.
 - [x] Handle IPv4 options via `header_len` parsing.
 - [x] Handle missing replies (timeouts) by continuing.
-- [ ] Correctly handle duplicate/delayed packets without contaminating later TTLs.
-- [ ] Fully handle wrong-traceroute/wrong-TTL replies (B16-hard behavior).
+- [x] Correctly handle duplicate/delayed packets without contaminating later TTLs.
+- [x] Fully handle wrong-traceroute/wrong-TTL replies (B16-hard behavior).
 
 ### Output Contract
 - [x] Returns `list[list[str]]`.
