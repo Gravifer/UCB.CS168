@@ -1,4 +1,6 @@
 import util
+from dataclasses import dataclass, field
+from collections.abc import Callable
 
 # Your program should send TTLs in the range [1, TRACEROUTE_MAX_TTL] inclusive.
 # Technically IPv4 supports TTLs up to 255, but in practice this is excessive.
@@ -106,110 +108,283 @@ class UDP:
             f"len {self.len}, cksum 0x{self.cksum:x})"
 
 # TODO feel free to add helper functions if you'd like
-"""
-Use parser combinators to parse a packet recursively.
-Each layer is IPv4 | ICMP | UDP | unknown ;  the last is only pretty printed as hexdump.
-"""
+
+@dataclass
+class ParsedLayer:
+    kind: str
+    start: int
+    end: int
+    value: object | None = None
+    note: str = ""
+    children: list["ParsedLayer"] = field(default_factory=list)
 
 
-def printrecvpacket(data: bytes, pretty: bool = True):
-    print(f"Packet data: {data.hex()}")
-    if pretty:
-        def hexdump_section(title: str, start: int, end: int, indent: str = ""):
-            section = data[start:end]
-            print(f"{indent}{title} [{start}:{end}] ({len(section)} bytes)")
-            for i in range(0, len(section), 16):
-                chunk = section[i:i+16]
-                hex_chunk = ' '.join(f"{b:02x}" for b in chunk)
-                ascii_chunk = ''.join((chr(b) if 32 <= b <= 126 else '.') for b in chunk)
-                print(f"{indent}  {start + i:04x}  {hex_chunk:<47}  {ascii_chunk}")
+class _PacketView:
+    """
+    Use parser combinators to parse a packet recursively.
+    Each layer is IPv4 | ICMP | UDP | unknown ;  the last is only pretty printed as hexdump.
+    """
 
-        if len(data) < 20:
-            hexdump_section("Packet (too short for IPv4 header)", 0, len(data))
-            return
+    Parser = Callable[[bytes, int], ParsedLayer | None]
+
+    @staticmethod
+    def _unknown_parser(note: str) -> Parser:
+        def parse(data: bytes, start: int) -> ParsedLayer:
+            bounded_start = min(max(0, start), len(data))
+            return ParsedLayer("unknown", bounded_start, len(data), note=note)
+
+        return parse
+
+    @staticmethod
+    def _choice(*parsers: Parser) -> Parser:
+        def parse(data: bytes, start: int) -> ParsedLayer | None:
+            for parser in parsers:
+                parsed = parser(data, start)
+                if parsed is not None:
+                    return parsed
+            return None
+
+        return parse
+
+    @staticmethod
+    def _seq(first: Parser, next_for: Callable[[ParsedLayer], Parser | None]) -> Parser:
+        def parse(data: bytes, start: int) -> ParsedLayer | None:
+            node = first(data, start)
+            if node is None:
+                return None
+
+            next_parser = next_for(node)
+            if next_parser is None:
+                return node
+
+            child = next_parser(data, node.end)
+            if child is not None:
+                node.children.append(child)
+            return node
+
+        return parse
+
+    @staticmethod
+    def _parse_ipv4(data: bytes, start: int) -> ParsedLayer | None:
+        if len(data) - start < 20:
+            return None
 
         try:
-            outer_ipv4 = IPv4(data)
+            ipv4 = IPv4(data[start:])
         except Exception:
-            hexdump_section("Packet (failed to parse IPv4 header)", 0, len(data))
-            return
+            return None
 
-        outer_ip_end = min(outer_ipv4.header_len, len(data))
-        print("┌─ IPv4 (outer) \t"
-            f"src={outer_ipv4.src} dst={outer_ipv4.dst} "
-            f"ttl={outer_ipv4.ttl} proto={outer_ipv4.proto}"
-        )
-        hexdump_section("│  Header", 0, outer_ip_end, indent="│")
+        if ipv4.header_len < 20:
+            return None
 
-        if outer_ipv4.proto != 1:
-            print("└─ Not ICMP payload; raw packet follows")
-            hexdump_section("Payload", outer_ip_end, len(data), indent="   ")
-            return
+        end = min(start + ipv4.header_len, len(data))
+        return ParsedLayer("ipv4", start, end, value=ipv4)
 
-        if len(data) < outer_ip_end + 8:
-            print("└─ ICMP header truncated")
-            hexdump_section("Remaining", outer_ip_end, len(data), indent="   ")
-            return
+    @staticmethod
+    def _parse_icmp(data: bytes, start: int) -> ParsedLayer | None:
+        if len(data) - start < 8:
+            return None
 
         try:
-            icmp = ICMP(data[outer_ip_end:outer_ip_end+8])
+            icmp = ICMP(data[start:start + 8])
         except Exception:
-            print("└─ Failed to parse ICMP header")
-            hexdump_section("Remaining", outer_ip_end, len(data), indent="   ")
-            return
+            return None
 
-        print("├─ ICMP")
-        print(f"│  type={icmp.type} code={icmp.code} cksum=0x{icmp.cksum:x}")
-        hexdump_section("│  Header", outer_ip_end, outer_ip_end + 8, indent="│")
+        return ParsedLayer("icmp", start, start + 8, value=icmp)
 
-        inner_ip_start = outer_ip_end + 8
-        if len(data) < inner_ip_start + 20:
-            print("└─ Embedded IPv4 header truncated")
-            hexdump_section("Remaining", inner_ip_start, len(data), indent="   ")
-            return
+    @staticmethod
+    def _parse_udp(data: bytes, start: int) -> ParsedLayer | None:
+        if len(data) - start < 8:
+            return None
 
         try:
-            inner_ipv4 = IPv4(data[inner_ip_start:])
+            udp = UDP(data[start:start + 8])
         except Exception:
-            print("└─ Failed to parse embedded IPv4 header")
-            hexdump_section("Remaining", inner_ip_start, len(data), indent="   ")
-            return
+            return None
 
-        inner_ip_end = min(inner_ip_start + inner_ipv4.header_len, len(data))
-        print("├─ IPv4 (embedded/original probe)")
-        print(
-            f"│  src={inner_ipv4.src} dst={inner_ipv4.dst} "
-            f"ttl={inner_ipv4.ttl} proto={inner_ipv4.proto}"
-        )
-        hexdump_section("│  Header", inner_ip_start, inner_ip_end, indent="│")
+        return ParsedLayer("udp", start, start + 8, value=udp)
 
-        inner_udp_start = inner_ip_end
-        if inner_ipv4.proto == 17 and len(data) >= inner_udp_start + 8:
-            try:
-                udp = UDP(data[inner_udp_start:inner_udp_start + 8])
-                print("└─ UDP (embedded/original probe)")
-                print(
-                    f"   src_port={udp.src_port} dst_port={udp.dst_port} "
-                    f"len={udp.len} cksum=0x{udp.cksum:x}"
-                )
-                hexdump_section("   Header", inner_udp_start, inner_udp_start + 8, indent="   ")
-            except Exception:
-                print("└─ Failed to parse embedded UDP header")
-                hexdump_section("Remaining", inner_udp_start, len(data), indent="   ")
-        elif inner_ipv4.proto == 17:
-            print("└─ Embedded UDP header truncated")
-            hexdump_section("Remaining", inner_udp_start, len(data), indent="   ")
+    @classmethod
+    def _parse_embedded_packet(cls, data: bytes, start: int) -> ParsedLayer:
+        parser = cls._choice(cls._parse_ip_chain(), cls._unknown_parser("failed to parse embedded packet"))
+        parsed = parser(data, start)
+        if parsed is None:
+            return ParsedLayer("unknown", start, len(data), note="failed to parse embedded packet")
+        return parsed
+
+    @classmethod
+    def _next_after_ipv4(cls, node: ParsedLayer) -> Parser | None:
+        ipv4 = node.value
+        if not isinstance(ipv4, IPv4):
+            return None
+
+        if ipv4.proto == 1:
+            return cls._parse_icmp_chain()
+        if ipv4.proto == 17:
+            return cls._choice(cls._parse_udp, cls._unknown_parser("truncated or invalid UDP payload"))
+        return cls._unknown_parser(f"unsupported IPv4 protocol {ipv4.proto}")
+
+    @classmethod
+    def _next_after_icmp(cls, _: ParsedLayer) -> Parser | None:
+        return cls._parse_embedded_packet
+
+    @classmethod
+    def _parse_icmp_chain(cls) -> Parser:
+        return cls._seq(cls._parse_icmp, cls._next_after_icmp)
+
+    @classmethod
+    def _parse_ip_chain(cls) -> Parser:
+        return cls._seq(cls._parse_ipv4, cls._next_after_ipv4)
+
+    @classmethod
+    def _subtree_end(cls, node: ParsedLayer) -> int:
+        end = node.end
+        for child in node.children:
+            end = max(end, cls._subtree_end(child))
+        return end
+
+    @classmethod
+    def parse_packet(cls, data: bytes) -> ParsedLayer:
+        root = cls._choice(cls._parse_ip_chain(), cls._unknown_parser("too short or invalid IPv4 packet"))(data, 0)
+        if root is None:
+            return ParsedLayer("unknown", 0, len(data), note="too short or invalid IPv4 packet")
+
+        consumed_end = cls._subtree_end(root)
+        if consumed_end < len(data):
+            root.children.append(ParsedLayer("unknown", consumed_end, len(data), note="trailing bytes"))
+
+        return root
+
+    @staticmethod
+    def _hexdump_section(data: bytes, start: int, end: int, indent: str) -> None:
+        section = data[start:end]
+        for i in range(0, len(section), 16):
+            chunk = section[i:i + 16]
+            hex_chunk = ' '.join(f"{b:02x}" for b in chunk)
+            ascii_chunk = ''.join((chr(b) if 32 <= b <= 126 else '.') for b in chunk)
+            print(f"{indent}{start + i:04x}  {hex_chunk:<47}  {ascii_chunk}")
+
+    @staticmethod
+    def _field_boundaries(node: ParsedLayer) -> list[int]:
+        length = max(0, node.end - node.start)
+        if node.kind == "icmp":
+            return [b for b in [1, 2, 4, 8] if b < length]
+        if node.kind == "udp":
+            return [b for b in [2, 4, 6, 8] if b < length]
+        if node.kind == "ipv4":
+            base = [1, 2, 4, 6, 8, 9, 10, 12, 16, 20]
+            if length > 20:
+                base.append(length)
+            return [b for b in base if b < length]
+        return []
+
+    @classmethod
+    def _field_names(cls, node: ParsedLayer) -> list[str]:
+        length = max(0, node.end - node.start)
+        if node.kind == "icmp":
+            names = ["type", "code", "cksum", "rest"]
+        elif node.kind == "udp":
+            names = ["src_port", "dst_port", "len", "cksum"]
+        elif node.kind == "ipv4":
+            names = [
+                "ver+ihl", "tos", "len", "id", "flags+frag", "ttl",
+                "proto", "cksum", "src", "dst"
+            ]
+            if length > 20:
+                names.append("options")
         else:
-            print("└─ Embedded payload is not UDP")
-            hexdump_section("Remaining", inner_udp_start, len(data), indent="   ")
+            return []
+
+        boundaries = cls._field_boundaries(node)
+        return names[:len(boundaries) + 1]
+
+    @classmethod
+    def _print_known_header_with_separators(cls, data: bytes, node: ParsedLayer, indent: str) -> None:
+        start = node.start
+        end = node.end
+        section = data[start:end]
+        boundaries = set(cls._field_boundaries(node))
+        parts: list[str] = []
+        current: list[str] = []
+
+        for idx, byte in enumerate(section):
+            current.append(f"{byte:02x}")
+            if (idx + 1) in boundaries:
+                parts.append(' '.join(current))
+                current = []
+
+        if current:
+            parts.append(' '.join(current))
+
+        labels = cls._field_names(node)
+
+        widths: list[int] = []
+        for i, part in enumerate(parts):
+            label = labels[i] if i < len(labels) else ""
+            widths.append(max(len(label), len(part)))
+
+        padded_parts = [part.ljust(widths[i]) for i, part in enumerate(parts)]
+        if labels:
+            padded_labels = []
+            for i in range(len(parts)):
+                label = labels[i] if i < len(labels) else ""
+                padded_labels.append(label.ljust(widths[i]))
+            print(f"{indent}{' ' * 6}{' | '.join(padded_labels)}")
+
+        print(f"{indent}{start:04x}  {' | '.join(padded_parts)}")
+
+    @staticmethod
+    def _layer_label(node: ParsedLayer) -> str:
+        if node.kind == "ipv4" and isinstance(node.value, IPv4):
+            ipv4 = node.value
+            return (
+                f"IPv4 src={ipv4.src} dst={ipv4.dst} "
+                f"ttl={ipv4.ttl} proto={ipv4.proto}"
+            )
+        if node.kind == "icmp" and isinstance(node.value, ICMP):
+            icmp = node.value
+            return f"ICMP type={icmp.type} code={icmp.code} cksum=0x{icmp.cksum:x}"
+        if node.kind == "udp" and isinstance(node.value, UDP):
+            udp = node.value
+            return (
+                f"UDP src_port={udp.src_port} dst_port={udp.dst_port} "
+                f"len={udp.len} cksum=0x{udp.cksum:x}"
+            )
+        return f"Unknown ({node.note})"
+
+    @classmethod
+    def print_layer_tree(cls, data: bytes, node: ParsedLayer, verbose: bool = True, prefix: str = "", is_last: bool = True) -> None:
+        connector = "└─" if is_last else "├─"
+        length = max(0, node.end - node.start)
+        print(f"{prefix}{connector} {cls._layer_label(node)} [{node.start}:{node.end}] ({length} bytes)")
+
+        child_prefix = prefix + ("   " if is_last else "│  ")
+        if verbose:
+            if node.kind in {"ipv4", "icmp", "udp"}:
+                cls._print_known_header_with_separators(data, node, child_prefix)
+            else:
+                cls._hexdump_section(data, node.start, node.end, child_prefix)
+
+        for i, child in enumerate(node.children):
+            cls.print_layer_tree(data, child, verbose, child_prefix, i == len(node.children) - 1)
+
+
+def parse_packet(data: bytes) -> ParsedLayer:
+    return _PacketView.parse_packet(data)
+
+
+def print_recv_packet(data: bytes, pretty: bool = True, verbose: bool = True) -> None:
+    tree = parse_packet(data)
+    if pretty:
+        _PacketView.print_layer_tree(data, tree, verbose)
     else:
-        # print(f"Packet data: {data.hex()}")
-        ipv4 = IPv4(data)
-        print(ipv4)
-        icmp = ICMP(data[ipv4.header_len:ipv4.header_len+8])
-        print(icmp)
-        udp = UDP(data[ipv4.header_len+8:ipv4.header_len+16])
-        print(udp)
+        def print_flat(node: ParsedLayer):
+            print(_PacketView._layer_label(node))
+            for child in node.children:
+                print_flat(child)
+
+        print(f"Packet data: {data.hex()}")
+        print_flat(tree)
 
 def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
         -> list[list[str]]:
@@ -237,13 +412,13 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
         util.print_result([], ttl)
     return []
     """
-    sendsock.set_ttl(1)
+    sendsock.set_ttl(2)
     sendsock.sendto(b'Hola', (ip, TRACEROUTE_PORT_NUMBER))
     recvsock.recv_select()
     data, (addr, port) = recvsock.recvfrom()
     print(f"Received packet from {addr}:{port}")
-    printrecvpacket(data, pretty=False)
-    util.print_result([addr], 1)
+    print_recv_packet(data, pretty=True, verbose=False)
+    util.print_result([addr], 2)
     return []
 
 
