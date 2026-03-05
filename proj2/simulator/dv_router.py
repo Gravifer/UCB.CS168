@@ -5,8 +5,6 @@ Based on skeleton code by:
   MurphyMc, zhangwen0411, lab352
 """
 
-from pickletools import int4
-
 import sim.api as api
 from cs168.dv import (
     RoutePacket,
@@ -99,14 +97,17 @@ class DVRouter(DVRouterBase):
         """
         
         ##### Begin Stage 2 #####
-        if not isinstance(packet, api.Packet):
-            raise Exception(f"DVRouter should only receive RoutePackets, but got {type(packet)}")
-        # drop if 1. no route 2. latency >= INFINITY
+        # // if not isinstance(packet, api.Packet):
+        # //     raise Exception(f"DVRouter should only receive RoutePackets, but got {type(packet)}")
+        # drop if 1. no route 2. latency >= INFINITY 3. ttl exceeded 4. not data plane
+        packet.ttl -= 1
         if (dst := packet.dst) not in self.table or\
-          self.table[dst].latency >= INFINITY:
+          self.table[dst].latency >= INFINITY or\
+          packet.ttl <= 0:
             return # ? Is entry dropping handled by _ValidatedDict ?
         out_port = self.table[dst].port
         if out_port != in_port:
+            # self.log("Forwarding packet %s to port %d" % (packet, out_port), level="debug")
             self.send(packet, port=out_port)
         ##### End Stage 2 #####
 
@@ -155,7 +156,7 @@ class DVRouter(DVRouterBase):
                 self.table.pop(dst)
                 self.s_log(f"Route to {dst} expired")
                 if self.POISON_EXPIRED:
-                    self.send_routes(force=True)
+                    self.send_routes()
         ##### End Stages 5, 9 #####
 
     def handle_route_advertisement(self, route_dst, route_latency, port):
@@ -189,13 +190,15 @@ class DVRouter(DVRouterBase):
         linkcost_to_neighbor = self.ports.get_latency(port)
         sum_latency = saturated_add(route_latency, linkcost_to_neighbor)
         if port == cur_nexthop or sum_latency < cur_latency:
+            no_change = port == cur_nexthop and sum_latency == cur_latency
             self.table[route_dst] = TableEntry(
                 dst=route_dst,
                 latency=sum_latency,
                 port=port,
                 expire_time=api.current_time() + self.ROUTE_TTL,
             )
-            self.send_routes()
+            if not no_change:
+                self.send_routes()
         ##### End Stages 4, 10 #####
 
     def handle_link_up(self, port, latency):
