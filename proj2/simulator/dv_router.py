@@ -77,7 +77,12 @@ class DVRouter(DVRouterBase):
         assert port in self.ports.get_all_ports(), "Link should be up, but is not."
 
         ##### Begin Stage 1 #####
-
+        self.table[host] = TableEntry(
+            dst=host,
+            latency=self.ports.get_latency(port),
+            port=port,
+            expire_time=FOREVER,
+        )
         ##### End Stage 1 #####
 
     def handle_data_packet(self, packet, in_port):
@@ -92,7 +97,15 @@ class DVRouter(DVRouterBase):
         """
         
         ##### Begin Stage 2 #####
-
+        if not isinstance(packet, api.Packet):
+            raise Exception(f"DVRouter should only receive RoutePackets, but got {type(packet)}")
+        # drop if 1. no route 2. latency >= INFINITY
+        if (dst := packet.dst) not in self.table or\
+          self.table[dst].latency >= INFINITY:
+            return # ? Is entry dropping handled by _ValidatedDict ?
+        out_port = self.table[dst].port
+        if out_port != in_port:
+            self.send(packet, port=out_port)
         ##### End Stage 2 #####
 
     def send_routes(self, force=False, single_port=None):
