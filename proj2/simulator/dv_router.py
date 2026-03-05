@@ -5,6 +5,8 @@ Based on skeleton code by:
   MurphyMc, zhangwen0411, lab352
 """
 
+from pickletools import int4
+
 import sim.api as api
 from cs168.dv import (
     RoutePacket,
@@ -162,7 +164,33 @@ class DVRouter(DVRouterBase):
         """
         
         ##### Begin Stages 4, 10 #####
-
+        assert port is not None, "Got route advertisement with no port specified"
+        # - Advertisement from the current next-hop always accepted
+        # - only accept strict improvements from other neighbors
+        cur_entry = self.table[route_dst] if route_dst in self.table else None
+        if cur_entry is not None and cur_entry.expire_time > api.current_time():
+            cur_nexthop = cur_entry.port
+            cur_latency = cur_entry.latency
+        else: # * pylance struggles with ternaries with attribute access
+            cur_nexthop = None
+            cur_latency = INFINITY
+        def saturated_add(a: int, b: int): # * don't rely on arithm with INFINITY
+            if a >= INFINITY or b >= INFINITY:
+                return INFINITY
+            return a + b
+        # ? Should we ignore advertisements from ports that are down ? (i.e. not in self.ports)
+        if port not in self.ports.get_all_ports():
+            raise Exception(f"Received route advertisement from port {port} which is not in self.ports")
+        linkcost_to_neighbor = self.ports.get_latency(port)
+        sum_latency = saturated_add(route_latency, linkcost_to_neighbor)
+        if port == cur_nexthop or sum_latency < cur_latency:
+            self.table[route_dst] = TableEntry(
+                dst=route_dst,
+                latency=sum_latency,
+                port=port,
+                expire_time=api.current_time() + self.ROUTE_TTL,
+            )
+            self.send_routes()
         ##### End Stages 4, 10 #####
 
     def handle_link_up(self, port, latency):
