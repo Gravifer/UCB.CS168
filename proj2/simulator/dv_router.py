@@ -150,7 +150,12 @@ class DVRouter(DVRouterBase):
         """
         
         ##### Begin Stages 5, 9 #####
-
+        for dst, entry in list(self.table.items()):
+            if entry.expire_time < api.current_time():
+                self.table.pop(dst)
+                self.s_log(f"Route to {dst} expired")
+                if self.POISON_EXPIRED:
+                    self.send_routes(force=True)
         ##### End Stages 5, 9 #####
 
     def handle_route_advertisement(self, route_dst, route_latency, port):
