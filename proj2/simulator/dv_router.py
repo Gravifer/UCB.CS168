@@ -58,7 +58,11 @@ class DVRouter(DVRouterBase):
         self.table.owner = self
 
         ##### Begin Stage 10A #####
-
+        """cache for triggered adversizing
+        record the most recent advertisement sent out of each port for each destination.
+        maps dst to list of (time, latency) pairs
+        """
+        self.history = {}
         ##### End Stage 10A #####
 
     def add_static_route(self, host, port):
@@ -83,6 +87,7 @@ class DVRouter(DVRouterBase):
             port=port,
             expire_time=FOREVER,
         )
+        self.history[host] = [(api.current_time(), self.ports.get_latency(port))]
         ##### End Stage 1 #####
 
     def handle_data_packet(self, packet, in_port):
@@ -122,24 +127,28 @@ class DVRouter(DVRouterBase):
         """
         
         ##### Begin Stages 3, 6, 7, 8, 10 #####
-        target_ports =self.ports.get_all_ports()
+        if not hasattr(self, "history"):
+            self.history = {}
 
-        def send_routes_to_port(port):
-            for dst, entry in self.table.items():
-                is_source = entry.port == port
-                latency = entry.latency
-                if is_source:
-                    if self.SPLIT_HORIZON:
-                        continue
-                    elif self.POISON_REVERSE:
-                        latency = INFINITY
-                self.send_route(port, dst, latency)
-
-        if single_port is not None:
-            target_ports = [single_port]
+        target_ports = (
+            [single_port] if single_port is not None else list(self.ports.get_all_ports())
+        )
 
         for port in target_ports:
-            send_routes_to_port(port)
+            for dst, entry in self.table.items():
+                is_source = entry.port == port
+                if self.SPLIT_HORIZON and is_source:
+                    continue
+
+                latency = INFINITY if self.POISON_REVERSE and is_source else entry.latency
+                if latency > INFINITY:
+                    latency = INFINITY
+
+                history_key = (port, dst)
+                prev_latency = self.history.get(history_key)
+                if force or prev_latency is None or prev_latency != latency:
+                    self.send_route(port, dst, latency)
+                    self.history[history_key] = latency
         ##### End Stages 3, 6, 7, 8, 10 #####
 
     def expire_routes(self):
@@ -151,7 +160,6 @@ class DVRouter(DVRouterBase):
         ##### Begin Stages 5, 9 #####
         for dst, entry in list(self.table.items()):
             if entry.expire_time < api.current_time():
-                self.s_log(f"Route to {dst} expired")
                 if self.POISON_EXPIRED:
                     self.table[dst] = TableEntry(
                         dst=dst,
@@ -161,6 +169,7 @@ class DVRouter(DVRouterBase):
                     )
                 else:
                     self.table.pop(dst)
+                self.s_log(f"Route to {dst} expired")
         ##### End Stages 5, 9 #####
 
     def handle_route_advertisement(self, route_dst, route_latency, port):
