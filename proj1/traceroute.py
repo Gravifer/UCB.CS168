@@ -471,6 +471,7 @@ def traceroute(sendsock: util.Socket, recvsock: util.Socket, ip: str) \
                 break
 
             data, (addr, _) = recvsock.recvfrom()
+            print_recv_packet(data, pretty=True, verbose=True)
             validated = validate_probe_reply(data)
             if validated is None:
                 continue
