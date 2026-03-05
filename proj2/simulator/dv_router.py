@@ -24,12 +24,12 @@ class DVRouter(DVRouterBase):
 
     # -----------------------------------------------
     # At most one of these should ever be on at once
-    SPLIT_HORIZON = False
+    SPLIT_HORIZON = True
     POISON_REVERSE = False
     # -----------------------------------------------
 
     # Determines if you send poison for expired routes
-    POISON_EXPIRED = False
+    POISON_EXPIRED = True
 
     # Determines if you send updates when a link comes up
     SEND_ON_LINK_UP = False
@@ -100,13 +100,11 @@ class DVRouter(DVRouterBase):
         # // if not isinstance(packet, api.Packet):
         # //     raise Exception(f"DVRouter should only receive RoutePackets, but got {type(packet)}")
         # drop if 1. no route 2. latency >= INFINITY 3. ttl exceeded 4. not data plane
-        packet.ttl -= 1
         if (dst := packet.dst) not in self.table or\
-          self.table[dst].latency >= INFINITY or\
-          packet.ttl <= 0:
+          self.table[dst].latency >= INFINITY :
             return # ? Is entry dropping handled by _ValidatedDict ?
         out_port = self.table[dst].port
-        if out_port != in_port:
+        if True:# out_port != in_port:
             # self.log("Forwarding packet %s to port %d" % (packet, out_port), level="debug")
             self.send(packet, port=out_port)
         ##### End Stage 2 #####
@@ -153,10 +151,16 @@ class DVRouter(DVRouterBase):
         ##### Begin Stages 5, 9 #####
         for dst, entry in list(self.table.items()):
             if entry.expire_time < api.current_time():
-                self.table.pop(dst)
                 self.s_log(f"Route to {dst} expired")
                 if self.POISON_EXPIRED:
-                    self.send_routes()
+                    self.table[dst] = TableEntry(
+                        dst=dst,
+                        latency=INFINITY,
+                        port=entry.port,
+                        expire_time=api.current_time() + self.ROUTE_TTL,
+                    )
+                else:
+                    self.table.pop(dst)
         ##### End Stages 5, 9 #####
 
     def handle_route_advertisement(self, route_dst, route_latency, port):
