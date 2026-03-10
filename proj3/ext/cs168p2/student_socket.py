@@ -432,8 +432,8 @@ class StudentUSocket(StudentUSocketBase):
     self.G = manager.TIMER_GRANULARITY # Timer granularity
 
     self.fin_ctrl = FinControl(self)
-    self.retx_queue = RetxQueue()
-    self.rx_queue = RecvQueue()
+    self.retx_queue = RetxQueue() # retransmission queue
+    self.rx_queue   = RecvQueue() # receive queue
 
   def _do_timers(self):
     """
@@ -525,10 +525,10 @@ class StudentUSocket(StudentUSocketBase):
     Begins the TCP handshake by initializing the socket and sends a SYN to the peer.
     Called by POX.
     """
-    assert self.state is CLOSED
-    assert not self.is_bound
+    assert self.state is CLOSED , "connect called on non-closed socket"
+    assert not self.is_bound    , "connect called on already bound socket"
 
-    self.snd = TXControlBlock()
+    self.snd = TXControlBlock() # iss is randomized in TXControlBlock's __init__
     self.rcv = RXControlBlock()
     self.rcv.wnd = self.RX_DATA_MAX
 
@@ -542,7 +542,12 @@ class StudentUSocket(StudentUSocketBase):
     self.bind(dev.ip_addr, 0)
 
     ## Start of Stage 1.1 ##
-
+    # Send SYN
+    self.snd.nxt = self.snd.iss # ? exacty which is intended? start at iss or (iss + 1) ?
+    syn_pkt = self.new_packet(ack=False, syn=True)
+    self.state = SYN_SENT
+    self.snd.nxt = self.snd.nxt |PLUS| 1
+    self.tx(syn_pkt)
     ## End of Stage 1.1 ##
 
   def tx(self, p, retxed=False):
@@ -589,7 +594,8 @@ class StudentUSocket(StudentUSocketBase):
     if self.state is CLOSED:
       return
     ## Start of Stage 1.2 ##
-
+    elif self.state is SYN_SENT:
+      self.handle_synsent(seg)
     ## End of Stage 1.2 ##
     elif self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2,
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
@@ -630,7 +636,7 @@ class StudentUSocket(StudentUSocketBase):
     Performs various actions required when in the SYN_SENT state,
     still part of the 3 way handshake.
     """
-    assert seg.SYN  # don't support SYN_RECEIVED
+    assert seg.SYN  ,"# don't support SYN_RECEIVED"
 
     acceptable_ack = False
     if seg.ACK:
@@ -644,9 +650,22 @@ class StudentUSocket(StudentUSocketBase):
 
     if acceptable_ack:
       ## Start of Stage 1.3 ##
-
+      # // self.state = ESTABLISHED # ! nope, just 2/3 way there
+      # 1. Just received the SYN-ACK packet, so update the receive sequence space to indicate the next byte we expect to receive after that.
+      self.rcv.nxt = seg.seq |PLUS| 1
+      # 2. The SYN-ACK packet is also acking our SYN packet, so update the send sequence space to indicate that the SYN has been acked.
+      self.snd.una = seg.ack
+      # 3. Check if the SYN-ACK packet we got is actually acking the SYN we sent. (This if-case is given to you in the starter code.) If so,...
       if self.snd.una |GT| self.snd.iss:
-        pass
+        # ... send an ACK packet by doing steps 4-7:
+        # 4. Set our next sequence number to be the ack number for the ACK packet.
+        self.snd.nxt = seg.ack
+        # 5. Set the state to ESTABLISHED.
+        self.state = ESTABLISHED
+        # 6. Call self.set_pending_ack() to express that you want to send an ACK.
+        self.set_pending_ack()
+        # 7. Call self.update_window(seg). More on this in a later stage.
+        self.update_window(seg)
 
       ## End of Stage 1.3 ##
 
