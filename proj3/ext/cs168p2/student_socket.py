@@ -601,7 +601,13 @@ class StudentUSocket(StudentUSocketBase):
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
       if self.acceptable_seg(seg, payload):
         ## Start of Stage 2.1 ##
-        
+        # 1. If the segment is in-order (i.e. it is the next segment you are expecting), call self.handle_accepted_seg(seg, payload).
+        assert seg.seq |GE| self.rcv.nxt, "acceptable_seg should have guaranteed this"
+        if seg.seq |EQ| self.rcv.nxt:
+          self.handle_accepted_seg(seg, payload)
+        # 2. Otherwise, the packet is out-of-order, so call self.set_pending_ack() to express that you want to send an ack.
+        elif seg.seq |GT| self.rcv.nxt:
+          self.set_pending_ack()
         ## End of Stage 2.1 ##
         pass
         ## Start of Stage 3.1 ##
@@ -697,7 +703,16 @@ class StudentUSocket(StudentUSocketBase):
       payload = payload[:rcv.wnd] # Chop to size!
 
     ## Start of Stage 2.3 ##
-
+    # 1. Just received a packet, so update the receive sequence space to indicate the next byte we expect to receive after that.
+    rcv.nxt = rcv.nxt |PLUS| len(payload)
+    # 2. Just received some payload, which is going to use up some buffer space. Decrease the receive window size accordingly.
+    rcv.wnd -= len(payload)
+    # 3. Pass the payload to the user, so add the payload to the end of self.rx_data.
+    #     Hint: a += b can be used to add bytes to the end of a byte array.
+    # ? shouldn't we check whether the size of rx_data exceeds RX_DATA_MAX?  But if we do, then what do we do with the excess data?  Drop it?  But that would be weird, since the sender doesn't know that, and won't retransmit it.  So maybe we just let rx_data grow beyond RX_DATA_MAX, but make sure to advertise a zero window when that happens?
+    self.rx_data += payload
+    # 4. Call self.set_pending_ack() to indicate that we want to ack this data.
+    self.set_pending_ack()
     ## End of Stage 2.3 ##
 
   def update_window(self, seg):
@@ -824,7 +839,9 @@ class StudentUSocket(StudentUSocketBase):
       return
 
     ## Start of Stage 2.2 ##
-
+    # If the state is one of [ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2], and the length of the payload is non-zero, call handle_accepted_payload(payload).
+    if self.state in [ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2] and len(payload) > 0:
+      self.handle_accepted_payload(payload)
     ## End of Stage 2.2 ##
 
     # eight, check FIN bit

@@ -51,20 +51,22 @@ Do not modify any other file, add files, add imports, or edit outside the marked
 ## Stage Checklist (Strict Order)
 
 ### Stage 1: Three-Way Handshake
-- [ ] 1.1 Sending SYN complete and tested
-- [ ] 1.2 Receiving packets in SYN_SENT complete and tested
-- [ ] 1.3 Processing SYN-ACK and sending ACK complete and tested
-- [ ] Gate passed: python autograder.py s1
-- [ ] Gate passed: python autograder.py all 1
-- [ ] User approval to continue
+- [x] 1.1 Sending SYN complete and tested
+- [x] 1.2 Receiving packets in SYN_SENT complete and tested
+- [x] 1.3 Processing SYN-ACK and sending ACK complete and tested
+- [x] Gate passed: python autograder.py s1
+- [x] Gate passed: python autograder.py all 1
+- [x] User approval to continue
+- User complains about still lacking understanding of the bigger picture
 
 ### Stage 2: Receiving In-Order Data
-- [ ] 2.1 Raw receive logic complete and tested
-- [ ] 2.2 Accepted segment handling complete and tested
-- [ ] 2.3 Accepted payload handling complete and tested
-- [ ] Gate passed: python autograder.py s2
-- [ ] Gate passed: python autograder.py all 2
-- [ ] User approval to continue
+- [x] 2.1 Raw receive logic complete and tested
+- [x] 2.2 Accepted segment handling complete and tested
+- [x] 2.3 Accepted payload handling complete and tested
+- [x] Gate passed: python autograder.py s2
+- [x] Gate passed: python autograder.py all 2
+- [x] User approval to continue
+- L713: a lot of doubt about the size of rx_data
 
 ### Stage 3: Receiving Out-of-Order Data
 - [ ] 3.1 Insert packets into receive queue complete and tested
