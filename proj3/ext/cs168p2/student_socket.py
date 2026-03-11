@@ -600,20 +600,34 @@ class StudentUSocket(StudentUSocketBase):
     elif self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2,
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
       if self.acceptable_seg(seg, payload):
-        ## Start of Stage 2.1 ##
-        # 1. If the segment is in-order (i.e. it is the next segment you are expecting), call self.handle_accepted_seg(seg, payload).
-        assert seg.seq |GE| self.rcv.nxt, "acceptable_seg should have guaranteed this"
-        if seg.seq |EQ| self.rcv.nxt:
-          self.handle_accepted_seg(seg, payload)
-        # 2. Otherwise, the packet is out-of-order, so call self.set_pending_ack() to express that you want to send an ack.
-        elif seg.seq |GT| self.rcv.nxt:
-          self.set_pending_ack()
-        ## End of Stage 2.1 ##
-        pass
-        ## Start of Stage 3.1 ##
-        # you may need to remove Stage 2's code.
-
-        ## End of Stage 3.1 ##
+        _lab_progress = "Stage 3"
+        match _lab_progress:
+          case "Stage 2":
+            ## Start of Stage 2.1 ##
+            # 1. If the segment is in-order (i.e. it is the next segment you are expecting), call self.handle_accepted_seg(seg, payload).
+            assert seg.seq |GE| self.rcv.nxt, "acceptable_seg should have guaranteed this"
+            if seg.seq |EQ| self.rcv.nxt:
+              self.handle_accepted_seg(seg, payload)
+            # 2. Otherwise, the packet is out-of-order, so call self.set_pending_ack() to express that you want to send an ack.
+            elif seg.seq |GT| self.rcv.nxt:
+              self.set_pending_ack()
+            ## End of Stage 2.1 ##
+          case "Stage 3":
+            ## Start of Stage 3.1 ##
+            # // you may need to remove Stage 2's code.
+            # When a packet arrives, simply insert it into self.rx_queue.
+            self.rx_queue.push(p)
+            """ # ?
+            # If the packet is the next expected packet (i.e. its sequence number is equal to the next expected sequence number), then we can process it and any subsequently received in-order packets.
+            if seg.seq |EQ| self.rcv.nxt:
+              # 1. Call self.handle_accepted_seg(seg, payload) to process the newly arrived packet.
+              self.handle_accepted_seg(seg, payload)
+              # 2. Check if the next packet in the receive queue is now the next expected packet. If so, pop it from the receive queue and process it as well. Repeat this step until the next packet in the receive queue is not the next expected packet.
+              while not self.rx_queue.empty() and self.rx_queue.peek()[0] |EQ| self.rcv.nxt:
+                _, next_p = self.rx_queue.pop()
+                self.handle_accepted_seg(next_p.tcp, next_p.app)
+            """
+            ## End of Stage 3.1 ##
       else:
         self.set_pending_ack()
 
@@ -621,7 +635,20 @@ class StudentUSocket(StudentUSocketBase):
     ## Start of Stage 3.2 ##
     # checking recv queue
     # Hint: data = packet.app[self.rcv.nxt |MINUS| packet.tcp.seq:]
-
+    while not self.rx_queue.empty(): # // and self.rx_queue.peek()[0] |EQ| self.rcv.nxt:
+    # 1. If the next packet (with smallest sequence number) in the queue is out-of-order, set a pending ack and stop checking the queue.
+      assert self.rx_queue.peek()[0] |GE| self.rcv.nxt, "got a packet that should have been processed already"
+      if self.rx_queue.peek()[0] |GT| self.rcv.nxt:
+        self.set_pending_ack()
+        break
+    # 2. Otherwise, the next packet in the queue is in-order, so you should process it.
+    #   - Pop the packet from the queue.
+      _, next_p = self.rx_queue.pop()
+    #   - Extract its payload (using the hint to deal with overlaps).
+      data = next_p.app[self.rcv.nxt |MINUS| next_p.tcp.seq:]
+    #   - Call self.handle_accepted_seg to process the payload.
+      self.handle_accepted_seg(next_p.tcp, data)
+    # 3. Repeat Steps 1 and 2 until all in-order packets in the queue have been handled.
     ## End of Stage 3.2 ##
 
     self.maybe_send()
