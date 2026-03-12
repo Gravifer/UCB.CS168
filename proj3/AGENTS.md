@@ -102,29 +102,29 @@ Do not modify any other file, add files, add imports, or edit outside the marked
 - [x] User approval to continue
 
 ### Stage 7: Active Close
-- [ ] 7.1 close() from ESTABLISHED sends FIN path complete and tested
-- [ ] 7.2 FIN handling transitions (FIN_WAIT_1/FIN_WAIT_2/CLOSING paths) complete and tested
-- [ ] 7.3 ACK handling transitions (FIN_WAIT_1 and CLOSING) complete and tested
-- [ ] Gate passed: python autograder.py s7
-- [ ] Gate passed: python autograder.py all 7
-- [ ] User approval to continue
+- [x] 7.1 close() from ESTABLISHED sends FIN path complete and tested
+- [x] 7.2 FIN handling transitions (FIN_WAIT_1/FIN_WAIT_2/CLOSING paths) complete and tested
+- [x] 7.3 ACK handling transitions (FIN_WAIT_1 and CLOSING) complete and tested
+- [x] Gate passed: python autograder.py s7
+- [x] Gate passed: python autograder.py all 7
+- [x] User approval to continue
 
 ### Stage 8: Retransmitting Packets
-- [ ] 8.1 First-transmission timestamping and queue insertion complete and tested
-- [ ] 8.2 Remove acked packets from retransmit queue complete and tested
-- [ ] 8.3 Retransmit expired earliest packet complete and tested
-- [ ] Gate passed: python autograder.py s8
-- [ ] Gate passed: python autograder.py all 8
-- [ ] User approval to continue
+- [x] 8.1 First-transmission timestamping and queue insertion complete and tested
+- [x] 8.2 Remove acked packets from retransmit queue complete and tested
+- [x] 8.3 Retransmit expired earliest packet complete and tested
+- [x] Gate passed: python autograder.py s8
+- [x] Gate passed: python autograder.py all 8
+- [x] User approval to continue
 
 ### Stage 9: Updating RTO by Estimating RTT
-- [ ] 9.1 RFC6298 RTO update logic complete and tested
-- [ ] 9.2 ACK processing wired to update_rto complete and tested
-- [ ] 9.3 RTO backoff on retransmission complete and tested
-- [ ] Gate passed: python autograder.py s9
-- [ ] Gate passed: python autograder.py all 9
-- [ ] User approval to continue
-- [ ] Project 3B ready for submission
+- [x] 9.1 RFC6298 RTO update logic complete and tested
+- [x] 9.2 ACK processing wired to update_rto complete and tested
+- [x] 9.3 RTO backoff on retransmission complete and tested
+- [x] Gate passed: python autograder.py s9
+- [x] Gate passed: python autograder.py all 9
+- [x] User approval to continue
+- [x] Project 3B ready for submission
 
 ## Non-Negotiable Stop Conditions
 
