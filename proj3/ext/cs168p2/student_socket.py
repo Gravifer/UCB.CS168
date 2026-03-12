@@ -143,7 +143,7 @@ class StudentUSocketBase(object):
     Removes a wake function if it's set
     """
     try:
-      self._wakes.remove(wake)
+      self._wakers.remove(wake)
       return True
     except ValueError:
       return False
@@ -301,7 +301,7 @@ class FinControl:
     if self.next_state:
       self.socket.state = self.next_state
 
-    self.socket.snd.nxt = rp.tcp.seq |PLUS| 1  # FIN takes up seq space
+    # tx() already advanced snd.nxt for the FIN; record that exact value.
     self.sent_seqno = self.socket.snd.nxt
     self.pending = False
     self.sent = True
@@ -490,7 +490,6 @@ class StudentUSocket(StudentUSocketBase):
       # Hint: Use a method of self.fin_ctrl.
       self.fin_ctrl.set_pending(next_state=LAST_ACK)
       ## End of Stage 6.2 ##
-      pass
     elif self.state in (CLOSING,LAST_ACK,TIME_WAIT):
       raise RuntimeError("connecting closing")
     else:
@@ -545,11 +544,10 @@ class StudentUSocket(StudentUSocketBase):
     self.bind(dev.ip_addr, 0)
 
     ## Start of Stage 1.1 ##
-    # Send SYN
-    self.snd.nxt = self.snd.iss # ? exacty which is intended? start at iss or (iss + 1) ?
+    # Send SYN: reset nxt to iss so SYN packet gets seq=iss; tx() will advance nxt.
+    self.snd.nxt = self.snd.iss
     syn_pkt = self.new_packet(ack=False, syn=True)
     self.state = SYN_SENT
-    self.snd.nxt = self.snd.nxt |PLUS| 1
     self.tx(syn_pkt)
     self.log.debug("connect: sent SYN, iss={0}".format(self.snd.iss))
     ## End of Stage 1.1 ##
@@ -610,34 +608,7 @@ class StudentUSocket(StudentUSocketBase):
     elif self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2,
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
       if self.acceptable_seg(seg, payload):
-        _lab_progress = "Stage 3"
-        match _lab_progress:
-          case "Stage 2":
-            ## Start of Stage 2.1 ##
-            # 1. If the segment is in-order (i.e. it is the next segment you are expecting), call self.handle_accepted_seg(seg, payload).
-            assert seg.seq |GE| self.rcv.nxt, "acceptable_seg should have guaranteed this"
-            if seg.seq |EQ| self.rcv.nxt:
-              self.handle_accepted_seg(seg, payload)
-            # 2. Otherwise, the packet is out-of-order, so call self.set_pending_ack() to express that you want to send an ack.
-            elif seg.seq |GT| self.rcv.nxt:
-              self.set_pending_ack()
-            ## End of Stage 2.1 ##
-          case "Stage 3":
-            ## Start of Stage 3.1 ##
-            # // you may need to remove Stage 2's code.
-            # When a packet arrives, simply insert it into self.rx_queue.
-            self.rx_queue.push(p)
-            """ # ?
-            # If the packet is the next expected packet (i.e. its sequence number is equal to the next expected sequence number), then we can process it and any subsequently received in-order packets.
-            if seg.seq |EQ| self.rcv.nxt:
-              # 1. Call self.handle_accepted_seg(seg, payload) to process the newly arrived packet.
-              self.handle_accepted_seg(seg, payload)
-              # 2. Check if the next packet in the receive queue is now the next expected packet. If so, pop it from the receive queue and process it as well. Repeat this step until the next packet in the receive queue is not the next expected packet.
-              while not self.rx_queue.empty() and self.rx_queue.peek()[0] |EQ| self.rcv.nxt:
-                _, next_p = self.rx_queue.pop()
-                self.handle_accepted_seg(next_p.tcp, next_p.app)
-            """
-            ## End of Stage 3.1 ##
+        self.rx_queue.push(p)
       else:
         self.set_pending_ack()
         self.log.debug("Got unacceptable packet, set pending ack. seg.seq={0} rcv.nxt={1} rcv.wnd={2}"
@@ -647,7 +618,7 @@ class StudentUSocket(StudentUSocketBase):
     ## Start of Stage 3.2 ##
     # checking recv queue
     # Hint: data = packet.app[self.rcv.nxt |MINUS| packet.tcp.seq:]
-    while not self.rx_queue.empty(): # // and self.rx_queue.peek()[0] |EQ| self.rcv.nxt:
+    while not self.rx_queue.empty():
       # 1. If the next packet (with smallest sequence number) in the queue is out-of-order, set a pending ack and stop checking the queue.
       assert self.rx_queue.peek()[0] |GE| self.rcv.nxt, "got a packet that should have been processed already"
       if self.rx_queue.peek()[0] |GT| self.rcv.nxt:
@@ -697,7 +668,6 @@ class StudentUSocket(StudentUSocketBase):
 
     if acceptable_ack:
       ## Start of Stage 1.3 ##
-      # // self.state = ESTABLISHED # ! nope, just 2/3 way there
       # 1. Just received the SYN-ACK packet, so update the receive sequence space to indicate the next byte we expect to receive after that.
       self.rcv.nxt = seg.seq |PLUS| 1
       # 2. The SYN-ACK packet is also acking our SYN packet, so update the send sequence space to indicate that the SYN has been acked.
@@ -737,8 +707,6 @@ class StudentUSocket(StudentUSocketBase):
     # Clamp self.rto so that it is at most self.MAX_RTO, and at least self.MIN_RTO.
     self.rto = min(max(self.MIN_RTO, self.rto), self.MAX_RTO)
     ## End of Stage 9.1 ##
-
-    pass
 
 
   def handle_accepted_payload(self, payload):
@@ -808,7 +776,7 @@ class StudentUSocket(StudentUSocketBase):
     ## Start of Stage 9.2 ##
     # 1. The call to self.update_rto is already in the starter code. Assign acked_pkts so that it contains the acks that you want self.update_rto to process.
     #     Hint: See your code in Stage 8 directly above this part of the code.
-    for (ackno, p) in acked_pkts:
+    for (_, p) in acked_pkts:
       if not p.retxed:
         self.update_rto(p)
     
@@ -875,20 +843,9 @@ class StudentUSocket(StudentUSocketBase):
     if self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, CLOSING):
       ## Start of Stage 4.1 ##
       assert seg.ACK , "shouldn't be here if ACK bit is not set"
-      # // assert self.snd.nxt |LE| self.snd.una + self.snd.wnd , "nxt should be within the send window"
-      """
-      # Note: We intentionally do not assert snd.nxt <= snd.una + snd.wnd as a
-      # global invariant. A peer may shrink its advertised window after we've
-      # already sent data, which can make this temporarily false. RFC behavior
-      # is to stop sending new bytes when usable window <= 0, while still
-      # allowing retransmission of bytes already sent.
-      # * remember that seg.ack is the next sequence number the other side expects, so seg.ack - 1 is the last sequence number the other side has ACKed.
-      """
       # 1. If the ack number of the received segment represents a sent but unacked packet, call self.handle_accepted_ack on the segment.
       #   Hint: Check out the send sequence space diagram for which sequence numbers have been sent but unacked.
       if self.snd.una |LT| seg.ack and seg.ack |LE| self.snd.nxt:
-        # self.log.debug("Got an ack packet acknowledging new data, calling handle_accepted_ack. "
-        #                "seg.ack={0} snd.una={1} snd.nxt={2}".format(seg.ack, self.snd.una, self.snd.nxt))
         self.handle_accepted_ack(seg)
       # 2. If the ack number had already previously been acked before (i.e. this is an old ack), drop the packet.
       #   Allow the rest of check_ack to execute, but don’t allow the rest of handle_accepted_seg to execute. 
@@ -908,7 +865,6 @@ class StudentUSocket(StudentUSocketBase):
         self.log.debug("Got an ack packet outside the send window, dropping. "
                        "seg.ack={0} snd.una={1} snd.wnd={2}"
                         .format(seg.ack, self.snd.una, self.snd.wnd))
-        # return continue_after_ack
         raise RuntimeError("Got an ack packet outside the send window. Maybe something's horribly wrong?")
       ## End of Stage 4.1 ##
 
@@ -954,9 +910,6 @@ class StudentUSocket(StudentUSocketBase):
     A segment that arrives here has been cleared by acceptable_seg()
     This is the main function that processes in-order segments
     """
-    snd = self.snd
-    rcv = self.rcv
-
     assert not seg.SYN
     if not seg.ACK:
       return
