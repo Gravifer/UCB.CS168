@@ -29,8 +29,10 @@ Do not modify any other file, add files, add imports, or edit outside the marked
     - User explicitly confirms readiness to continue, and have checked or let you checked it in the list.
 5. Progression to next stage is allowed only when:
     - All subtasks in current stage are complete.
-    - python autograder.py sN passes.
-    - python autograder.py all N passes.
+    - python3 autograder.py sN passes.
+    - python3 autograder.py all N passes.
+    - `python3 autograder.py all ${n} 2>&1 | grep  -Ev '##|\\x1b\[' | grep -E "(FAIL|ERROR|ok|FAILED|test_s)"` is a good way to deflate test output; grep can also take a `--line-buffered` flag if you need it.
+    - `../../pox.py config=./tests/s${n}_t${m}.cfg tcpip.pcap --node=r1 --no-tx` is a good way to focus on a specific subtask
     - User explicitly confirms readiness to continue.
 6. Never pre-implement future stages for convenience.
 7. If future-stage behavior seems required, add a note and defer it; do not implement it early.
@@ -85,19 +87,19 @@ Do not modify any other file, add files, add imports, or edit outside the marked
 - [x] User approval to continue
 
 ### Stage 5: Honoring Advertised Window
-- [ ] 5.1 update_window uses advertised seg.win complete and tested
-- [ ] Gate passed: python autograder.py s5
-- [ ] Gate passed: python autograder.py all 5
-- [ ] User approval to continue
-- [ ] Project 3A checkpoint ready
+- [x] 5.1 update_window uses advertised seg.win complete and tested
+- [x] Gate passed: python autograder.py s5
+- [x] Gate passed: python autograder.py all 5
+- [x] User approval to continue
+- [x] Project 3A checkpoint ready
 
 ### Stage 6: Passive Close
-- [ ] 6.1 Receive FIN path complete and tested
-- [ ] 6.2 close() from CLOSE_WAIT sends FIN path complete and tested
-- [ ] 6.3 LAST_ACK ACK-of-our-FIN handling complete and tested
-- [ ] Gate passed: python autograder.py s6
-- [ ] Gate passed: python autograder.py all 6
-- [ ] User approval to continue
+- [x] 6.1 Receive FIN path complete and tested
+- [x] 6.2 close() from CLOSE_WAIT sends FIN path complete and tested
+- [x] 6.3 LAST_ACK ACK-of-our-FIN handling complete and tested
+- [x] Gate passed: python autograder.py s6
+- [x] Gate passed: python autograder.py all 6
+- [x] User approval to continue
 
 ### Stage 7: Active Close
 - [ ] 7.1 close() from ESTABLISHED sends FIN path complete and tested
