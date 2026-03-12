@@ -548,6 +548,7 @@ class StudentUSocket(StudentUSocketBase):
     self.state = SYN_SENT
     self.snd.nxt = self.snd.nxt |PLUS| 1
     self.tx(syn_pkt)
+    self.log.debug("connect: sent SYN, iss={0}".format(self.snd.iss))
     ## End of Stage 1.1 ##
 
   def tx(self, p, retxed=False):
@@ -566,7 +567,8 @@ class StudentUSocket(StudentUSocketBase):
     if (p.tcp.SYN or p.tcp.FIN or p.tcp.payload) and not retxed:
 
       ## Start of Stage 4.4 ##
-
+      # If the packet contains non-empty payload, update the next sequence number to be sent in your send sequence space.
+      self.snd.nxt = p.tcp.seq |PLUS| len(p.tcp.payload)
       ## End of Stage 4.4 ##
       pass
 
@@ -630,25 +632,29 @@ class StudentUSocket(StudentUSocketBase):
             ## End of Stage 3.1 ##
       else:
         self.set_pending_ack()
+        self.log.debug("Got unacceptable packet, set pending ack. seg.seq={0} rcv.nxt={1} rcv.wnd={2}"
+                        .format(seg.seq, self.rcv.nxt, self.rcv.wnd))
 
      
     ## Start of Stage 3.2 ##
     # checking recv queue
     # Hint: data = packet.app[self.rcv.nxt |MINUS| packet.tcp.seq:]
     while not self.rx_queue.empty(): # // and self.rx_queue.peek()[0] |EQ| self.rcv.nxt:
-    # 1. If the next packet (with smallest sequence number) in the queue is out-of-order, set a pending ack and stop checking the queue.
+      # 1. If the next packet (with smallest sequence number) in the queue is out-of-order, set a pending ack and stop checking the queue.
       assert self.rx_queue.peek()[0] |GE| self.rcv.nxt, "got a packet that should have been processed already"
       if self.rx_queue.peek()[0] |GT| self.rcv.nxt:
         self.set_pending_ack()
+        self.log.debug("Next packet in queue is out-of-order, set pending ack and stop checking the queue."
+                       "peek seq={0} rcv.nxt={1}".format(self.rx_queue.peek()[0], self.rcv.nxt))
         break
-    # 2. Otherwise, the next packet in the queue is in-order, so you should process it.
-    #   - Pop the packet from the queue.
+      # 2. Otherwise, the next packet in the queue is in-order, so you should process it.
+      #   - Pop the packet from the queue.
       _, next_p = self.rx_queue.pop()
-    #   - Extract its payload (using the hint to deal with overlaps).
+      #   - Extract its payload (using the hint to deal with overlaps).
       data = next_p.app[self.rcv.nxt |MINUS| next_p.tcp.seq:]
-    #   - Call self.handle_accepted_seg to process the payload.
+      #   - Call self.handle_accepted_seg to process the payload.
       self.handle_accepted_seg(next_p.tcp, data)
-    # 3. Repeat Steps 1 and 2 until all in-order packets in the queue have been handled.
+      # 3. Repeat Steps 1 and 2 until all in-order packets in the queue have been handled.
     ## End of Stage 3.2 ##
 
     self.maybe_send()
@@ -740,6 +746,8 @@ class StudentUSocket(StudentUSocketBase):
     self.rx_data += payload
     # 4. Call self.set_pending_ack() to indicate that we want to ack this data.
     self.set_pending_ack()
+    self.log.debug("handle_accepted_payload: got payload of len={0}, updated rcv.nxt={1} rcv.wnd={2}"
+                    .format(len(payload), rcv.nxt, rcv.wnd))
     ## End of Stage 2.3 ##
 
   def update_window(self, seg):
@@ -765,7 +773,8 @@ class StudentUSocket(StudentUSocketBase):
     acceptable_seg()
     """
     ## Start of Stage 4.2 ##
-
+    # Update the variable that keeps track of sent but unacknowledged sequence numbers.
+    self.snd.una = seg.ack
     ## End of Stage 4.2 ##
 
 
@@ -818,7 +827,35 @@ class StudentUSocket(StudentUSocketBase):
     # fifth, check ACK field
     if self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, CLOSING):
       ## Start of Stage 4.1 ##
-
+      assert seg.ACK , "shouldn't be here if ACK bit is not set"
+      assert seg.nxt |LE| self.snd.una + self.snd.wnd , "nxt should be within the send window"
+      # * remember that seg.ack is the next sequence number the other side expects, so seg.ack - 1 is the last sequence number the other side has ACKed.
+      # 1. If the ack number of the received segment represents a sent but unacked packet, call self.handle_accepted_ack on the segment.
+      #   Hint: Check out the send sequence space diagram for which sequence numbers have been sent but unacked.
+      if self.snd.una |LT| seg.ack and seg.ack |LE| self.snd.nxt:
+        # self.log.debug("Got an ack packet acknowledging new data, calling handle_accepted_ack. "
+        #                "seg.ack={0} snd.una={1} snd.nxt={2}".format(seg.ack, self.snd.una, self.snd.nxt))
+        self.handle_accepted_ack(seg)
+      # 2. If the ack number had already previously been acked before (i.e. this is an old ack), drop the packet.
+      #   Allow the rest of check_ack to execute, but don’t allow the rest of handle_accepted_seg to execute. 
+      #   (Hint: There’s a Boolean variable to help you.)
+      elif seg.ack |LE| self.snd.una:
+        continue_after_ack = False
+      # 3. If the ack number represents a byte you haven’t sent yet, drop the packet.
+      #   Don’t allow the rest of check_ack to execute, and don’t allow the rest of handle_accepted_seg to execute.
+      elif self.snd.nxt |LE| seg.ack and seg.ack |LE| self.snd.una + self.snd.wnd:
+        continue_after_ack = False
+        self.log.debug("Got an ack packet not yet sent, dropping. "
+                       "seg.ack={0} snd.nxt={1} snd.una={2} snd.wnd={3}"
+                        .format(seg.ack, self.snd.nxt, self.snd.una, self.snd.wnd))
+        return continue_after_ack
+      elif seg.ack |GT| self.snd.una + self.snd.wnd:
+        continue_after_ack = False
+        self.log.debug("Got an ack packet outside the send window, dropping. "
+                       "seg.ack={0} snd.una={1} snd.wnd={2}"
+                        .format(seg.ack, self.snd.una, self.snd.wnd))
+        # return continue_after_ack
+        raise RuntimeError("Got an ack packet outside the send window. Maybe something's horribly wrong?")
       ## End of Stage 4.1 ##
 
       if snd.una |LE| seg.ack and seg.ack |LE| snd.nxt:
@@ -840,7 +877,7 @@ class StudentUSocket(StudentUSocketBase):
       # restart the 2 msl timeout
       self.set_pending_ack()
       self.start_timer_timewait()
-
+    # * match case would be awkward here for technical reasons; see https://stackoverflow.com/questions/69854421/python-match-case-using-global-variables-in-the-cases-solvable-by-use-of-classe
     ## End of Stage 6.3 ##
     ## End of Stage 7.3 ##
 
@@ -888,8 +925,25 @@ class StudentUSocket(StudentUSocketBase):
     bytes_sent = 0
 
     ## Start of Stage 4.3 ##
-    remaining = 0
-    while remaining > 0:
+    """
+    Implement sending as much of the transmit buffer (self.tx_data) as allowable.
+    When creating packets to send, you need to maintain the following conditions:
+    - You can't send more data than what self.tx_data has.
+    - If self.tx_data becomes empty, there is nothing more to send on this call to maybe_send.
+    - You can't send more data than what your send window allows.
+        Hint: Our solution sets remaining to the number of bytes you can still send, according to the window.
+        Hint: Check out the send sequence space diagram and think about which range corresponds to the bytes you have not sent yet, but can still send.
+    - Each payload you send must be less than or equal to self.mss bytes in size.
+    Use self.new_packet to create new packets, and use self.tx to send out packets.
+    When you send out some bytes, remember to remove those bytes from the front of the self.tx_data array.
+    """
+    remaining = lambda : min(len(self.tx_data), snd.una + snd.wnd - snd.nxt)
+    while remaining() > 0:
+      pl_len = min(self.mss, remaining())
+      payload = self.tx_data[:pl_len]
+      p = self.new_packet(ack=True, data=payload)
+      self.tx(p)
+      self.tx_data = self.tx_data[pl_len:]
 
       num_pkts += 1
       bytes_sent += len(payload)
