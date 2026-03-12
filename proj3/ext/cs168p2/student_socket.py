@@ -724,7 +724,18 @@ class StudentUSocket(StudentUSocketBase):
     """
 
     ## Start of Stage 9.1 ##
-
+    # Use acked_pkt (the ack you received) to compute R, an estimate of the RTT based on this particular packet.
+    R = self.stack.now - acked_pkt.tx_ts
+    # Update any variables as described in RFC 6298.
+    if self.srtt == 0:
+      self.srtt = R
+      self.rttvar = R / 2
+    else:
+      self.rttvar = (1 - self.beta) * self.rttvar + self.beta * abs(self.srtt - R)
+      self.srtt = (1 - self.alpha) * self.srtt + self.alpha * R
+    self.rto = self.srtt + max(self.G, self.K * self.rttvar)
+    # Clamp self.rto so that it is at most self.MAX_RTO, and at least self.MIN_RTO.
+    self.rto = min(max(self.MIN_RTO, self.rto), self.MAX_RTO)
     ## End of Stage 9.1 ##
 
     pass
@@ -795,8 +806,8 @@ class StudentUSocket(StudentUSocketBase):
 
 
     ## Start of Stage 9.2 ##
-
-    acked_pkts = [] # remove when implemented
+    # 1. The call to self.update_rto is already in the starter code. Assign acked_pkts so that it contains the acks that you want self.update_rto to process.
+    #     Hint: See your code in Stage 8 directly above this part of the code.
     for (ackno, p) in acked_pkts:
       if not p.retxed:
         self.update_rto(p)
@@ -1042,7 +1053,10 @@ class StudentUSocket(StudentUSocketBase):
       self.tx(p, retxed=True)
 
       ## Start of Stage 9.3 ##
-
+      # Double self.rto.
+      self.rto *= 2
+      # Clamp self.rto so that it never exceeds self.MAX_RTO.
+      self.rto = min(self.rto, self.MAX_RTO)
       ## End of Stage 9.3 ##
 
   def set_pending_ack(self):
