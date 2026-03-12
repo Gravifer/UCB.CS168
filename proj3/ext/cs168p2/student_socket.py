@@ -485,7 +485,9 @@ class StudentUSocket(StudentUSocketBase):
       raise RuntimeError("close() is invalid in FIN_WAIT states")
     elif self.state is CLOSE_WAIT:
       ## Start of Stage 6.2 ##
-
+      # Set a pending FIN. Remember to provide an argument specifying which state to move to after the FIN is sent.
+      # Hint: Use a method of self.fin_ctrl.
+      self.fin_ctrl.set_pending(next_state=LAST_ACK)
       ## End of Stage 6.2 ##
       pass
     elif self.state in (CLOSING,LAST_ACK,TIME_WAIT):
@@ -806,7 +808,14 @@ class StudentUSocket(StudentUSocketBase):
     self.log.info("Got FIN!")
 
     ## Start of Stage 6.1 ##
-
+    # 1. If you are in the ESTABLISHED state, do steps 2–4.
+    if self.state == ESTABLISHED:
+      # 2. In the receive sequence space, update the next sequence number you expect to receive.
+      self.rcv.nxt = self.rcv.nxt |PLUS| 1
+      # 3. Call self.set_pending_ack() to ack the FIN.
+      self.set_pending_ack()
+      # 4. Update self.state.
+      self.state = CLOSE_WAIT
     ## End of Stage 6.1 ##
 
 
@@ -873,7 +882,10 @@ class StudentUSocket(StudentUSocketBase):
     elif self.state == CLOSING:
       pass
     elif self.state == LAST_ACK:
-      pass
+      # If the ack number in the segment you just received is acking the FIN you sent, then call self._delete_tcb() to delete the connection state.
+      # Hint: Use a method of self.fin_ctrl.
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self._delete_tcb()
     elif self.state == TIME_WAIT:
       # restart the 2 msl timeout
       self.set_pending_ack()
