@@ -568,10 +568,9 @@ class StudentUSocket(StudentUSocketBase):
 
       ## Start of Stage 4.4 ##
       # If the packet contains non-empty payload, update the next sequence number to be sent in your send sequence space.
-      seq_advance = len(p.tcp.payload) + int(p.tcp.SYN) + int(p.tcp.FIN)
+      seq_advance = len(p.tcp.payload) + int(p.tcp.SYN) + int(p.tcp.FIN) # int(b:bool) = 1 if b else 0
       self.snd.nxt = p.tcp.seq |PLUS| seq_advance
       ## End of Stage 4.4 ##
-      pass
 
     ## End of Stage 8.1 ##
     
@@ -760,7 +759,8 @@ class StudentUSocket(StudentUSocketBase):
     """
 
     ## Start of Stage 5.1 ##
-    self.snd.wnd = self.TX_DATA_MAX # remove when implemented
+    # // self.snd.wnd = self.TX_DATA_MAX # remove when implemented
+    self.snd.wnd = seg.win
     self.snd.wl1 = seg.seq
     self.snd.wl2 = seg.ack
 
