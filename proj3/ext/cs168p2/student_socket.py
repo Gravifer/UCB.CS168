@@ -568,7 +568,8 @@ class StudentUSocket(StudentUSocketBase):
 
       ## Start of Stage 4.4 ##
       # If the packet contains non-empty payload, update the next sequence number to be sent in your send sequence space.
-      self.snd.nxt = p.tcp.seq |PLUS| len(p.tcp.payload)
+      seq_advance = len(p.tcp.payload) + int(p.tcp.SYN) + int(p.tcp.FIN)
+      self.snd.nxt = p.tcp.seq |PLUS| seq_advance
       ## End of Stage 4.4 ##
       pass
 
@@ -828,7 +829,7 @@ class StudentUSocket(StudentUSocketBase):
     if self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, CLOSING):
       ## Start of Stage 4.1 ##
       assert seg.ACK , "shouldn't be here if ACK bit is not set"
-      assert seg.nxt |LE| self.snd.una + self.snd.wnd , "nxt should be within the send window"
+      assert self.snd.nxt |LE| self.snd.una + self.snd.wnd , "nxt should be within the send window"
       # * remember that seg.ack is the next sequence number the other side expects, so seg.ack - 1 is the last sequence number the other side has ACKed.
       # 1. If the ack number of the received segment represents a sent but unacked packet, call self.handle_accepted_ack on the segment.
       #   Hint: Check out the send sequence space diagram for which sequence numbers have been sent but unacked.
@@ -839,11 +840,11 @@ class StudentUSocket(StudentUSocketBase):
       # 2. If the ack number had already previously been acked before (i.e. this is an old ack), drop the packet.
       #   Allow the rest of check_ack to execute, but don’t allow the rest of handle_accepted_seg to execute. 
       #   (Hint: There’s a Boolean variable to help you.)
-      elif seg.ack |LE| self.snd.una:
+      elif seg.ack |LT| self.snd.una:
         continue_after_ack = False
       # 3. If the ack number represents a byte you haven’t sent yet, drop the packet.
       #   Don’t allow the rest of check_ack to execute, and don’t allow the rest of handle_accepted_seg to execute.
-      elif self.snd.nxt |LE| seg.ack and seg.ack |LE| self.snd.una + self.snd.wnd:
+      elif self.snd.nxt |LT| seg.ack and seg.ack |LE| self.snd.una + self.snd.wnd:
         continue_after_ack = False
         self.log.debug("Got an ack packet not yet sent, dropping. "
                        "seg.ack={0} snd.nxt={1} snd.una={2} snd.wnd={3}"

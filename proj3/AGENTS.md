@@ -69,20 +69,20 @@ Do not modify any other file, add files, add imports, or edit outside the marked
 - L713: a lot of doubt about the size of rx_data
 
 ### Stage 3: Receiving Out-of-Order Data
-- [ ] 3.1 Insert packets into receive queue complete and tested
-- [ ] 3.2 Process receive queue in order (including overlap handling path) complete and tested
-- [ ] Gate passed: python autograder.py s3
-- [ ] Gate passed: python autograder.py all 3
-- [ ] User approval to continue
+- [x] 3.1 Insert packets into receive queue complete and tested
+- [x] 3.2 Process receive queue in order (including overlap handling path) complete and tested
+- [x] Gate passed: python autograder.py s3
+- [x] Gate passed: python autograder.py all 3
+- [x] User approval to continue
 
 ### Stage 4: Simple Sending of Data
-- [ ] 4.1 ACK validation logic complete and tested
-- [ ] 4.2 Accepted ACK processing complete and tested
-- [ ] 4.3 Segment creation and send-window honoring complete and tested
-- [ ] 4.4 Transmit-side sequence-space updates complete and tested
-- [ ] Gate passed: python autograder.py s4
-- [ ] Gate passed: python autograder.py all 4
-- [ ] User approval to continue
+- [x] 4.1 ACK validation logic complete and tested
+- [x] 4.2 Accepted ACK processing complete and tested
+- [x] 4.3 Segment creation and send-window honoring complete and tested
+- [x] 4.4 Transmit-side sequence-space updates complete and tested
+- [x] Gate passed: python autograder.py s4
+- [x] Gate passed: python autograder.py all 4
+- [x] User approval to continue
 
 ### Stage 5: Honoring Advertised Window
 - [ ] 5.1 update_window uses advertised seg.win complete and tested
