@@ -568,6 +568,11 @@ class StudentUSocket(StudentUSocketBase):
 
 
     if (p.tcp.SYN or p.tcp.FIN or p.tcp.payload) and not retxed:
+      # 1.Tag the packet with the current time.
+      #     Hint: p.tx_ts and self.stack.now will be helpful.
+      p.tx_ts = self.stack.now
+      # 2. Add the packet to the retransmit queue.
+      self.retx_queue.push(p)
 
       ## Start of Stage 4.4 ##
       # If the packet contains non-empty payload, update the next sequence number to be sent in your send sequence space.
@@ -783,7 +788,9 @@ class StudentUSocket(StudentUSocketBase):
 
 
     ## Start of Stage 8.2 ##
-
+    # Use the ack number in the received segment (seg) to remove all acked packets from the retransmit queue.
+    # Hint: Use a method of self.retx_queue.
+    acked_pkts = self.retx_queue.pop_upto(seg.ack)
     ## End of Stage 8.2 ##
 
 
@@ -1018,8 +1025,16 @@ class StudentUSocket(StudentUSocketBase):
     """
 
     ## Start of Stage 8.3 ##
-    time_in_queue = 0 # modify when implemented
-
+    time_in_queue = 0
+    p = None
+    # 1. If the retransmit queue is not empty, get the earliest packet, and check if it’s expired.
+    if not self.retx_queue.empty():
+      # Hint: Reassign time_in_queue to how long the earliest packet has been in the queue.
+      seq_no, p = self.retx_queue.get_earliest_pkt()
+      assert seq_no == p.tcp.seq
+      time_in_queue = self.stack.now - p.tx_ts
+    # 2. If the packet is expired, resend the packet. This is already done for you in the starter code.
+    # 3. Note that in the starter code, we call self.tx(p, retxed=True). The retxed=True argument helps to ensure we don’t put the packet in the retransmit queue again.
     ## End of Stage 8.3 ##
 
     if time_in_queue > self.rto:
