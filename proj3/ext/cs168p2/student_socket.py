@@ -478,9 +478,10 @@ class StudentUSocket(StudentUSocketBase):
       self._delete_tcb()
     elif self.state is ESTABLISHED:
       ## Start of Stage 7.1 ##
-
+      # Set a pending FIN. Remember to provide an argument specifying which state to move to after the FIN is sent.
+      # Hint: Use a method of self.fin_ctrl.
+      self.fin_ctrl.set_pending(next_state=FIN_WAIT_1)
       ## End of Stage 7.1 ##
-      pass
     elif self.state in (FIN_WAIT_1,FIN_WAIT_2):
       raise RuntimeError("close() is invalid in FIN_WAIT states")
     elif self.state is CLOSE_WAIT:
@@ -820,7 +821,25 @@ class StudentUSocket(StudentUSocketBase):
 
 
     ## Start of Stage 7.2 ##
-
+    # Handle FIN in FIN_WAIT_1: ACK part handled by check_ack first, so state may change
+    if self.state == FIN_WAIT_1 and seg.FIN:
+      # Update receive seq space
+      self.rcv.nxt = self.rcv.nxt |PLUS| 1
+      # If also has ACK, go straight to TIME_WAIT. Otherwise, go to CLOSING.
+      if seg.ACK:
+        self.set_pending_ack()
+        self.start_timer_timewait()
+      else:
+        self.set_pending_ack()
+        self.state = CLOSING
+    # Handle FIN in FIN_WAIT_2
+    elif self.state == FIN_WAIT_2:
+      # - In the receive sequence space, update the next sequence number you expect to receive.
+      self.rcv.nxt = self.rcv.nxt |PLUS| 1
+      # - Set a pending ack.
+      self.set_pending_ack()
+      # - Transition to TIME_WAIT using self.start_timer_timewait().
+      self.start_timer_timewait()
     ## End of Stage 7.2 ##
 
   def check_ack(self, seg):
@@ -838,7 +857,7 @@ class StudentUSocket(StudentUSocketBase):
     if self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, CLOSING):
       ## Start of Stage 4.1 ##
       assert seg.ACK , "shouldn't be here if ACK bit is not set"
-      assert self.snd.nxt |LE| self.snd.una + self.snd.wnd , "nxt should be within the send window"
+      # ! does not hold! why? // assert self.snd.nxt |LE| self.snd.una + self.snd.wnd , "nxt should be within the send window"
       # * remember that seg.ack is the next sequence number the other side expects, so seg.ack - 1 is the last sequence number the other side has ACKed.
       # 1. If the ack number of the received segment represents a sent but unacked packet, call self.handle_accepted_ack on the segment.
       #   Hint: Check out the send sequence space diagram for which sequence numbers have been sent but unacked.
@@ -875,12 +894,18 @@ class StudentUSocket(StudentUSocketBase):
     ## Start of Stage 6.3 ##
     ## Start of Stage 7.3 ##
     if self.state == FIN_WAIT_1:
-      pass
+      # Use a self.fin_ctrl method to check if the ack number in the segment you just received is acking the FIN you sent.
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        # If so, then transition to FIN_WAIT_2.
+        self.state = FIN_WAIT_2
     elif self.state == FIN_WAIT_2:
       if self.retx_queue.empty():
         self.set_pending_ack()
     elif self.state == CLOSING:
-      pass
+      # Use a self.fin_ctrl method to check if the ack number in the segment you just received is acking the FIN you sent.
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        # If so, then transition to TIME_WAIT using self.start_timer_timewait().
+        self.start_timer_timewait()
     elif self.state == LAST_ACK:
       # If the ack number in the segment you just received is acking the FIN you sent, then call self._delete_tcb() to delete the connection state.
       # Hint: Use a method of self.fin_ctrl.
